@@ -7,7 +7,7 @@ core_path_ext = os.path.join(os.path.dirname(os.path.abspath(__file__)) , 'pide_
 import sys, re, warnings, json, inspect
 import numpy as np
 from scipy.interpolate import interp1d
-from santex import Isotropy
+from santex.isotropy import Isotropy
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -64,7 +64,6 @@ warnings.filterwarnings("ignore", category=RuntimeWarning) #ignoring many Runtim
    \ \_\                     
 	\/_/                     
 """
-#version 0.2, May, 2024
 #pide - (P)etrophysical (I)nterpretation tools for geo(D)ynamic (E)xploration
 #initially developed by Sinan Ozaydin (University of Sydney, School of Geosciences
 #sciences, Sydney, Australia).
@@ -99,6 +98,7 @@ class pide(object):
 		self._read_params()
 		self._read_water_part()
 		self._read_mineral_water_solubility()
+		self._read_water_calib()
 		self.object_formed = False
 		#setting up default values for the pide object
 		self.set_temperature(np.ones(1) * 900.0) #in Kelvin
@@ -128,6 +128,7 @@ class pide(object):
 		self.set_grain_size()
 		self.set_melt_fluid_interconnectivity()
 		self.set_mantle_water_partitions()
+		self.set_mantle_transition_zone_water_partitions()
 		self.set_mantle_water_solubility()
 		self.set_grain_boundary_water_partitioning()
 		self.set_grain_boundary_H_Diffusion()
@@ -171,8 +172,10 @@ class pide(object):
 		self.set_grain_boundary_water_partitioning(reval = True)
 		
 	def _read_cond_models(self):
-
-		#A function that reads conductivity model files and get the data.
+		
+		"""
+		A function that reads conductivity model files and get the data.
+		"""
 
 		self.fluid_cond_data = read_csv(os.path.join(self.core_path, 'cond_models' , 'fluids.csv'),delim = ',') 
 		self.melt_cond_data = read_csv(os.path.join(self.core_path, 'cond_models' , 'melt.csv'),delim = ',')
@@ -288,6 +291,7 @@ class pide(object):
 		self.dens_mat = create_nan_array()
 		self.mat_ref = create_nan_array()
 		self.comp_ref = create_nan_array()
+		self.mechanism_model = create_nan_array()
 		self.bib_ref = create_nan_array()
 		
 		#Filling up the arrays.
@@ -326,21 +330,19 @@ class pide(object):
 				except ValueError:
 					self.dens_mat[i][count-1] = self.cond_data_array[i][count][25]
 				self.mat_ref[i][count-1] = self.cond_data_array[i][count][26]
+				self.comp_ref[i][count-1] = self.cond_data_array[i][count][27]
+				self.mechanism_model[i][count-1] = self.cond_data_array[i][count][28]
 				try:
-					self.comp_ref[i][count-1] = self.cond_data_array[i][count][27]
-				except IndexError:
-					pass
-				try:
-					self.bib_ref[i][count-1] = self.cond_data_array[i][count][28]
+					self.bib_ref[i][count-1] = self.cond_data_array[i][count][29]
 				except IndexError:
 					pass
 				count += 1
 
 	def _read_params(self):
-
-		#READING THE PARAMETERS IN PARAMS.CSV WHICH ARE GENERAL PHYSICAL CONSTANTS
-		#AND PROPERTIES OF MATERIALS
-
+		
+		"""
+		A function that reads parameters in params.csv and materials.json
+		"""
 		params_dat = read_csv(os.path.join(self.core_path, 'params.csv'), delim = ',')
 
 		self.g = float(params_dat[0][1]) # in kg/
@@ -359,6 +361,10 @@ class pide(object):
 			self.materials_data = json.load(f)
 					
 	def _read_water_part(self):
+	
+		"""
+		A function to read parameters from water partitioning files.
+		"""
 	
 		self.ol_min_partitioning_list = ['opx_part.csv','cpx_part.csv','gt_part.csv']
 		self.ol_min_part_index = [15,16,18] #mineral indexes for the file read
@@ -468,8 +474,29 @@ class pide(object):
 				self.water_rwd_wds_part_type.append(None)
 				self.water_rwd_wds_part_function.append(None)
 				self.water_rwd_wds_part_pchange.append(None)
+				
+	def _read_water_calib(self):
+	
+		#Reading calibration correction factors from the file.
+
+		correction_factor_dat = read_csv(os.path.join(self.core_path, 'water_calib.csv'), delim = ',')
+
+		self.pat2with = float(correction_factor_dat[0][1])
+		self.bell2with = float(correction_factor_dat[1][1])
+		self.pat2bell = float(correction_factor_dat[2][1])
+		self.with2bell = 1.0/self.bell2with
+		self.bell2path = 1.0/self.pat2bell
+		self.with2pat = 1.0/self.pat2with
+		self.pat2bell95 = float(correction_factor_dat[3][1])
+		self.bell952pat = 1.0/self.pat2bell95
+		self.john2mosen = float(correction_factor_dat[4][1])
+		self.mosen2john = 1.0/self.john2mosen
 			
 	def _read_mineral_water_solubility(self):
+	
+		"""
+		A function that reads mineral water solubility parameters from the source files.
+		"""
 	
 		self.mineral_sol_file_list = ['opx_sol.csv','cpx_sol.csv','garnet_sol.csv','ol_sol.csv','rwd_wds_sol.csv','perov_sol.csv']
 		self.mineral_sol_index = [15,16,18,21,23,24] #mineral indexes for the file read
@@ -536,13 +563,17 @@ class pide(object):
 		value of 1.
 		
 		Input:
-		dict/float: mineral_name 
+		dict/float or 1-D array: mineral_name 
 		
 		Mineral_names:
-		ol,opx,cpx,garnet,mica,amp,quartz,plag,kfelds,sulphide,graphite,sp,rwd_wds,perov,mixture,other.
+		ol (olivine),opx (orthopyroxne),cpx (clinopyroxene),garnet,mica,amp (amphibole),quartz,
+		plag (plagioclase),kfelds (k-feldspar),sulphide,graphite,sp (spinel),
+		rwd_wds (ringwoodite or wadsleyite),perov (perovskite),mixture (mineral mixtures),
+		other (other minerals).
 		
 		Example:
 		set_composition_solid_mineral(ol = 0.6, opx = 0.4)
+		set_composition_solid_mineral(ol = [0.6,0.4], opx = [0.4,0.6])
 		
 		Organizes:
 		mineral fractions.
@@ -628,13 +659,14 @@ class pide(object):
 		value of 1.
 		
 		Input:
-		dict/float: rock_name 
+		dict/float or 1D-array: rock_name 
 		
 		Rock names:
 		granite,granulite,sandstone,gneiss,amphibolite,basalt,mud,gabbro,other_rock.
 		
 		Example:
 		set_composition_solid_rock(granite = 0.6, granulite = 0.4)
+		set_composition_solid_rock(granite = [0.6,0.4], granulite = [0.4,0.6])
 		
 		Organizes:
 		rock fractions.
@@ -690,7 +722,7 @@ class pide(object):
 		"""A method to set temperature of the environment.
 		
 		Input:
-		float: T || in Kelvin
+		float or 1-D array: T || in Kelvin
 		
 		Example:
 		set_temperature(temperature_array_list)
@@ -719,7 +751,7 @@ class pide(object):
 		"""A method to set pressure of the environment.
 		
 		Input:
-		float: P || in GPa
+		float or 1-D Array: P || in GPa
 		
 		Example:
 		set_pressure(pressure_array)
@@ -760,7 +792,7 @@ class pide(object):
 		"""A method to set depth of the environment.
 		
 		Input:
-		float: depth || in km
+		float or 1-D array: depth || in km
 		
 		Example:
 		set_depth(depth_array)
@@ -784,7 +816,7 @@ class pide(object):
 		water solubility models of olivine
 
 		Input:
-		dict/int: mineral_name = int
+		dict/int: mineral_name
 
 		Available minerals and assoicated index values:
 		ol:  0-Withers2012, 1-Bell2003, 2-Paterson1980 or 3-Default'
@@ -827,7 +859,7 @@ class pide(object):
 		4 MMO: Xu et al. (2000)
 		
 		Example:
-		set_o2_buffer(1) | setting it for Iron-Wustite
+		set_o2_buffer(1) | setting it to Iron-Wustite (IW) buffer.
 		
 		"""
 		pide.o2_buffer = o2_buffer
@@ -908,6 +940,10 @@ class pide(object):
 		self._load_mantle_transition_zone_water_partitions(method = 'array')
 		
 	def _check_composition(self, method = None):
+	
+		"""
+		An internal function to check input compositions sums up to 1.
+		"""
 
 		continue_adjusting = True
 
@@ -1032,6 +1068,8 @@ class pide(object):
 		print(text_color.RED +'All available minerals:')
 		for item in mineral_list:
 			print(text_color.YELLOW  + '-' + item + text_color.END)
+
+		return mineral_list
 			
 	def list_available_rocks(self):
 	
@@ -1043,6 +1081,8 @@ class pide(object):
 		for item in rock_list:
 			
 			print(text_color.YELLOW  + '-' + item + text_color.END)
+
+		return rock_list
 	
 	def list_mineral_econd_models(self, mineral_name):
 
@@ -1052,7 +1092,10 @@ class pide(object):
 		str: mineral_name
 
 		mineral_names:
-		ol,opx,cpx,garnet,mica,amp,quartz,plag,kfelds,sulphide,graphite,sp,rwd_wds,perov,mixture,other.
+		ol (olivine),opx (orthopyroxne),cpx (clinopyroxene),garnet,mica,amp (amphibole),quartz,
+		plag (plagioclase),kfelds (k-feldspar),sulphide,graphite,sp (spinel),
+		rwd_wds (ringwoodite or wadsleyite),perov (perovskite),mixture (mineral mixtures),
+		other (other minerals).
 		
 		Example:
 		list_mineral_econd_models('ol')
@@ -1099,7 +1142,7 @@ class pide(object):
 		def print_lists(min_idx):
 		
 			for i in range(0,len(self.name[min_idx])):
-				print(f'{str(i)}.   {self.name[min_idx][i]}')
+				print(f'{str(i)}.   {self.name[min_idx][i]}  -----  {self.mechanism_model[min_idx][i]}')
 			
 		print_lists(min_idx = min_index)
 		
@@ -1189,7 +1232,7 @@ class pide(object):
 		str: mineral_name
 
 		Mineral_names:
-		opx,cpx,garnet
+		opx(orthopyroxene),cpx(clinopyroxene),garnet
 		
 		Example:
 		list_mantle_water_partitions_solid('opx')
@@ -1230,7 +1273,7 @@ class pide(object):
 		str: mineral_name
 
 		Mineral_names:
-		cpx,garnet,perov
+		cpx(clinopyroxene),garnet,perov(perovskite)
 		
 		Example:
 		list_transition_zone_water_partitions_solid('cpx')
@@ -1272,7 +1315,7 @@ class pide(object):
 		str: mineral_name
 
 		Mineral_names:
-		ol,opx,cpx,garnet
+		ol(olivine),opx(orthopyroxene),cpx(clinopyroxene),garnet
 		
 		Example:
 		list_mantle_water_partitions_melt('ol')
@@ -1310,7 +1353,13 @@ class pide(object):
 	def list_mantle_water_solubilities(self, mineral_name):
 
 		"""A method to list upper-mantle water solubility models of different minerals.
-		Not all mantle minerals have water solubility models associated in pide.	
+		Not all mantle minerals have water solubility models associated in pide.
+		
+		Mineral_names:
+		ol (olivine),opx (orthopyroxne),cpx (clinopyroxene),garnet,mica,amp (amphibole),quartz,
+		plag (plagioclase),kfelds (k-feldspar),sulphide,graphite,sp (spinel),
+		rwd_wds (ringwoodite or wadsleyite),perov (perovskite),mixture (mineral mixtures),
+		other (other minerals).	
 		
 		Example:
 		list_mantle_water_solubilites('ol')
@@ -1369,13 +1418,23 @@ class pide(object):
 		"""A method to set mineral electrical conductivity model choices.
 		
 		Input:
-		dict/float: mineral_name - Name id of the mineral
+		dict/int or str: mineral_name - Name id of the mineral
+		
+		The input can be an integer, which will take the whole model: ol = 4
+		or the input can be a string where the mechanisms of the chosen model can be specified
+			ol = '4/proton'
+
+		
 
 		Mineral_names:
-		ol,opx,cpx,garnet,mica,amp,quartz,plag,kfelds,sulphide,graphite,sp,rwd_wds,perov,mixture,other.
+		ol (olivine),opx (orthopyroxne),cpx (clinopyroxene),garnet,mica,amp (amphibole),quartz,
+		plag (plagioclase),kfelds (k-feldspar),sulphide,graphite,sp (spinel),
+		rwd_wds (ringwoodite or wadsleyite),perov (perovskite),mixture (mineral mixtures),
+		other (other minerals).
 
 		Example:
-		set_mineral_conductivity_choice(ol = 4,opx = 1,cpx = 5,garnet = 0)		
+		set_mineral_conductivity_choice(ol = 4,opx = 1,cpx = 5,garnet = 0)
+		set_mineral_conductivity_choice(ol = '4/proton')		
 		"""
 	
 		pide.ol_cond_selection = kwargs.pop('ol', 0)
@@ -1506,13 +1565,17 @@ class pide(object):
 		"""A method to set mineral water contents independently.
 
 		Input:
-		dict/float: mineral_name - Name id of the mineral
+		dict/float or 1D array: mineral_name - Name id of the mineral || in ppm.
 
 		Mineral_names:
-		ol,opx,cpx,garnet,mica,amp,quartz,plag,kfelds,sulphide,graphite,sp,rwd_wds,perov,mixture,other.
+		ol (olivine),opx (orthopyroxne),cpx (clinopyroxene),garnet,mica,amp (amphibole),quartz,
+		plag (plagioclase),kfelds (k-feldspar),sulphide,graphite,sp (spinel),
+		rwd_wds (ringwoodite or wadsleyite),perov (perovskite),mixture (mineral mixtures),
+		other (other minerals).
 
 		Example:
-		set_mineral_water(ol = 20,opx = 100,cpx = 200,garnet = 15)		
+		set_mineral_water(ol = 20,opx = 100,cpx = 200,garnet = 15)
+		set_mineral_water(ol = [20,22],opx = [100,120],cpx = [200,240],garnet = [15,20])	
 		"""
 	
 		if self.temperature_default == True:
@@ -1574,13 +1637,14 @@ class pide(object):
 		"""A method to set rock water contents independently.
 
 		Input:
-		dict/float: rock_name - Name id of the mineral
+		dict/float or 1d array: rock_name - Name id of the mineral || in ppm.
 
 		Rock_names: 
 		granite,granulite,sandstone,gneiss,amphibolite,basalt,mud,gabbro,other_rock.
 
 		Example:
-		set_rock_water(granite = 100, granulite = 500)		
+		set_rock_water(granite = 100, granulite = 500)	
+		set_rock_water(granite = [100,200], granulite = [500,550])		
 		"""
 	
 		if self.temperature_default == True:
@@ -1620,9 +1684,10 @@ class pide(object):
 		"""A method to set bulk water content. This function will override the ones et in set_mineral_water.
 		
 		Input:
-		float: value/array
+		float or 1D array: value/array || in ppm.
 		
 		Example:
+		set_bulk_water(100)
 		set_bulk_water(water_content_array)
 		"""
 		if self.temperature_default == True:
@@ -1642,16 +1707,17 @@ class pide(object):
 		"""A method to set iron content of given mineral. Some of it might not have any effect, but still able to set for future directions in library. 
 		
 		Input:
-		dict: mineral_name = 0.1 || Range: 0 - 1
-		
-		Example:
-		ol = 0.1
-		
+		dict/float or array: mineral_name = 0.1 || Range: 0 - 1
+				
 		Mineral_names:
-		ol,opx,cpx,garnet,mica,amp,quartz,plag,kfelds,sulphide,graphite,sp,rwd_wds,perov,mixture,other.
+		ol (olivine),opx (orthopyroxne),cpx (clinopyroxene),garnet,mica,amp (amphibole),quartz,
+		plag (plagioclase),kfelds (k-feldspar),sulphide,graphite,sp (spinel),
+		rwd_wds (ringwoodite or wadsleyite),perov (perovskite),mixture (mineral mixtures),
+		other (other minerals).
 		
 		Example:
 		set_xfe_mineral(ol = 0.1,opx = 0.09,cpx = 0.1, garnet = 0.2)
+		set_xfe_mineral(ol = [0.1,0.11], opx = [0.1,0.11], cpx = [0.1,0.11], garnet = [0.1,0.11])
 		"""
 	
 		if self.temperature_default == True:
@@ -1707,16 +1773,17 @@ class pide(object):
 		"""A method to set param1 value of a given mineral. Some of it might not have any effect, but still able to set for future directions in library. 
 		
 		Input:
-		dict: mineral_name = 0.1 
-		
-		Example:
-		ol = 0.1
+		dict/float or 1d array: mineral_name = value
 		
 		Mineral_names:
-		ol,opx,cpx,garnet,mica,amp,quartz,plag,kfelds,sulphide,graphite,sp,rwd_wds,perov,mixture,other.
+		ol (olivine),opx (orthopyroxne),cpx (clinopyroxene),garnet,mica,amp (amphibole),quartz,
+		plag (plagioclase),kfelds (k-feldspar),sulphide,graphite,sp (spinel),
+		rwd_wds (ringwoodite or wadsleyite),perov (perovskite),mixture (mineral mixtures),
+		other (other minerals).
 		
 		Example:
 		set_param1_mineral(ol = 0.1,opx = 0.2)
+		set_param1_mineral(ol = [0.1,0.11], opx = [0.2,0.22])
 		"""
 	
 		if self.temperature_default == True:
@@ -1768,16 +1835,14 @@ class pide(object):
 		"""A method to set param1 value of a given rock. Some of it might not have any effect, but still able to set for future directions in library. 
 		
 		Input:
-		dict: mineral_name = float
-		
-		Example:
-		granite = 0.1
-		
+		dict/float or 1d array: mineral_name = value
+				
 		Rock names:
 		granite,granulite,sandstone,gneiss,amphibolite,basalt,mud,gabbro,other_rock.
 		
 		Example:
-		set_param1_mineral(granite = 0.1, granulite = 0.2)
+		set_param1_rock(granite = 0.1, granulite = 0.2)
+		set_param1_rock(granite = [0.1,0.11], granulite = [0.2,0.22])
 		"""
 	
 		if self.temperature_default == True:
@@ -1815,10 +1880,11 @@ class pide(object):
 		"""A method to set mass melt/fluid fraction of the system.
 		
 		Input:
-		float: value
+		float or 1d array || in mass fraction.
 		
 		Example:
 		set_melt_fluid_frac(0.04)
+		set_melt_fluid_frac([0.04,0.01])
 		"""
 	
 		if self.temperature_default == True:
@@ -1876,16 +1942,14 @@ class pide(object):
 		"""A method to set some melt properties. These are: CO_2, water, Na2O and K2O contents.
 		
 		Input:
-		dict: property_name = float
-		
-		Example:
-		set_melt_properties(co2 = 100)
-		
+		dict/float or 1darray : property_name = value
+				
 		Property names:
 		co2 (in ppm), water (in ppm), na2o(in wt%), k2o(in wt%)
 		
 		Example:
 		set_melt_properties(co2 = 1000, water = 2000)
+		set_melt_properties(co2 = [1000,3000], water = [2000,5000])
 		"""
 	
 		if self.temperature_default == True:
@@ -1912,16 +1976,14 @@ class pide(object):
 		"""A method to set some fluid properties. These are: salinity
 		
 		Input:
-		dict: property_name = float
-		
-		Example:
-		set_fluid_properties(salinity = 0.1)
-		
+		dict: property_name = float or 1d array
+				
 		Property names:
 		salinity (wt%)
 		
 		Example:
 		set_fluid_properties(salinity = 0.1)
+		set_fluid_properties(salinity = [0.1,0.15])
 		"""
 	
 		if self.temperature_default == True:
@@ -1938,10 +2000,11 @@ class pide(object):
 		"""A method to set Al2O3 of Opx. This is specifically used for some water solubility limits.
 		
 		Input:
-		float: value = 0.1
+		float or 1d array: value = 0.1 \\ in wt%
 		
 		Example:
 		set_alopx(0.3)
+		set_alopx([0.3,0.5])
 		"""
 	
 		if self.temperature_default == True:
@@ -1958,10 +2021,11 @@ class pide(object):
 		Jones (2016) uses 0.1 value to form an argument.
 		
 		Input:
-		float: value = 0.1
+		float or 1d array
 		
 		Example:
 		set_grain_boundary_water_partitioning(0.1)
+		set_grain_boundary_water_partitioning([0.1,0.2])
 		"""
 		
 		if reval == False:
@@ -1998,7 +2062,10 @@ class pide(object):
 		set_phase_interconnectivities(ol = 1, opx = 2, garnet = 4)
 		
 		Mineral_names:
-		ol,opx,cpx,garnet,mica,amp,quartz,plag,kfelds,sulphide,graphite,sp,rwd_wds,perov,mixture,other.
+		ol (olivine),opx (orthopyroxne),cpx (clinopyroxene),garnet,mica,amp (amphibole),quartz,
+		plag (plagioclase),kfelds (k-feldspar),sulphide,graphite,sp (spinel),
+		rwd_wds (ringwoodite or wadsleyite),perov (perovskite),mixture (mineral mixtures),
+		other (other minerals).
 		Rock names:
 		granite,granulite,sandstone,gneiss,amphibolite,basalt,mud,gabbro,other_rock.
 		
@@ -2249,10 +2316,13 @@ class pide(object):
 		is set to fit for future purposes.
 		
 		Input:
-		dict/float: ol = 0.1 || in mm
+		dict/float or 1d array: ol = 0.1 || in mm
 		
 		Mineral_names:
-		ol,opx,cpx,garnet,mica,amp,quartz,plag,kfelds,sulphide,graphite,sp,rwd_wds,perov,mixture,other.
+		ol (olivine),opx (orthopyroxne),cpx (clinopyroxene),garnet,mica,amp (amphibole),quartz,
+		plag (plagioclase),kfelds (k-feldspar),sulphide,graphite,sp (spinel),
+		rwd_wds (ringwoodite or wadsleyite),perov (perovskite),mixture (mineral mixtures),
+		other (other minerals).
 		
 		set_grain_size(ol = 1)
 		"""
@@ -3326,7 +3396,7 @@ class pide(object):
 				(self.other_rock_frac[idx_node] / self.other_rock_cond[idx_node]))
 				
 			elif pide.solid_phase_method == 2:
-			
+				
 				for i in range(start_idx,end_idx):
 					if self.quartz_frac[i] == 0.0:
 						self.quartz_cond[i] = -999
@@ -3360,7 +3430,7 @@ class pide(object):
 						self.mixture_cond[i] = -999
 					if self.other_frac[i] == 0.0:
 						self.other_cond[i] = -999
-	
+				
 				self.bulk_cond[idx_node] = 1.0 / ((self.quartz_frac[idx_node] / self.quartz_cond[idx_node]) +\
 				(self.plag_frac[idx_node] / self.plag_cond[idx_node]) +\
 				(self.amp_frac[idx_node] / self.amp_cond[idx_node]) +\
@@ -4269,42 +4339,40 @@ class pide(object):
 		elif method == 'index':
 			idx_node = sol_idx
 		
-		if (np.mean(self.melt_fluid_mass_frac) != 0.0) and (pide.fluid_or_melt_method == 1):
+		#calculating melt/nams water partitioning coefficients if theres any melt in the equilibrium 
+	
+		if self.water_melt_part_type[4][self.d_water_opx_melt_choice] == 0: #index 4 because it is in 4th index at the minerals list
+			
+			self.d_melt_opx = self.water_melt_part_function[4][self.d_water_opx_melt_choice] * np.ones(len(self.T))
+			
+		else:
+			
+			self.d_melt_opx = eval(self.water_melt_part_name[4][self.d_water_opx_melt_choice] + '(al_opx = self.al_opx[idx_node], p = self.p[idx_node], p_change = self.water_melt_part_pchange[4][self.d_water_opx_melt_choice], d_opx_ol = None, method = method)')
 		
-			#calculating melt/nams water partitioning coefficients if theres any melt in the equilibrium 
+		if self.water_melt_part_type[5][self.d_water_cpx_melt_choice] == 0:
 		
-			if self.water_melt_part_type[4][self.d_water_opx_melt_choice] == 0: #index 4 because it is in 4th index at the minerals list
-				
-				self.d_melt_opx = self.water_melt_part_function[4][self.d_water_opx_melt_choice] * np.ones(len(self.T))
-				
-			else:
-				
-				self.d_melt_opx = eval(self.water_melt_part_name[4][self.d_water_opx_melt_choice] + '(al_opx = self.al_opx[idx_node], p = self.p[idx_node], p_change = self.water_melt_part_pchange[4][self.d_water_opx_melt_choice], d_opx_ol = None, method = method)')
+			self.d_melt_cpx = self.water_melt_part_function[5][self.d_water_cpx_melt_choice] * np.ones(len(self.T))
 			
-			if self.water_melt_part_type[5][self.d_water_cpx_melt_choice] == 0:
+		else:
 			
-				self.d_melt_cpx = self.water_melt_part_function[5][self.d_water_cpx_melt_choice] * np.ones(len(self.T))
-				
-			else:
-				
-				self.d_melt_cpx = eval(self.water_melt_part_name[5][self.d_water_cpx_melt_choice] + '(al_opx = self.al_opx[idx_node], p = self.p[idx_node], p_change = self.water_melt_part_pchange[5][self.d_water_cpx_melt_choice], d_opx_ol = None, method = method)')
-			
-			if self.water_melt_part_type[7][self.d_water_garnet_melt_choice] == 0:
-			
-				self.d_melt_garnet = self.water_melt_part_function[7][self.d_water_garnet_melt_choice] * np.ones(len(self.T))
-				
-			else:
-				
-				self.d_melt_garnet = eval(self.water_melt_part_name[10][self.d_water_ol_melt_choice] + '(al_opx = self.al_opx[idx_node], p = self.p[idx_node], p_change = self.water_melt_part_pchange[7][self.d_water_garnet_melt_choice], d_opx_ol = None, method = method)')
-			
-			if self.water_melt_part_type[10][self.d_water_ol_melt_choice] == 0:
-			
-				self.d_melt_ol = self.water_melt_part_function[10][self.d_water_ol_melt_choice] * np.ones(len(self.T))
-				
-			else:
-				
-				self.d_melt_ol = eval(self.water_melt_part_name + '(al_opx = self.al_opx[idx_node], p = self.p[idx_node], p_change = self.water_melt_part_pchange[10][self.d_water_ol_melt_choice], d_opx_ol = None, method = method)')
+			self.d_melt_cpx = eval(self.water_melt_part_name[5][self.d_water_cpx_melt_choice] + '(al_opx = self.al_opx[idx_node], p = self.p[idx_node], p_change = self.water_melt_part_pchange[5][self.d_water_cpx_melt_choice], d_opx_ol = None, method = method)')
 		
+		if self.water_melt_part_type[7][self.d_water_garnet_melt_choice] == 0:
+		
+			self.d_melt_garnet = self.water_melt_part_function[7][self.d_water_garnet_melt_choice] * np.ones(len(self.T))
+			
+		else:
+			
+			self.d_melt_garnet = eval(self.water_melt_part_name[10][self.d_water_ol_melt_choice] + '(al_opx = self.al_opx[idx_node], p = self.p[idx_node], p_change = self.water_melt_part_pchange[7][self.d_water_garnet_melt_choice], d_opx_ol = None, method = method)')
+		
+		if self.water_melt_part_type[10][self.d_water_ol_melt_choice] == 0:
+		
+			self.d_melt_ol = self.water_melt_part_function[10][self.d_water_ol_melt_choice] * np.ones(len(self.T))
+			
+		else:
+			
+			self.d_melt_ol = eval(self.water_melt_part_name + '(al_opx = self.al_opx[idx_node], p = self.p[idx_node], p_change = self.water_melt_part_pchange[10][self.d_water_ol_melt_choice], d_opx_ol = None, method = method)')
+	
 		#determining chosen nam/olivine water partitioning coefficients.
 		if self.water_ol_part_type[4][self.d_water_opx_ol_choice] == 0:
 		
@@ -4430,7 +4498,7 @@ class pide(object):
 		pide.garnet_water[idx_node] = pide.ol_water[idx_node] * self.d_garnet_ol[idx_node]
 		pide.garnet_water[self.garnet_frac == 0] = 0.0
 		
-	def transition_zone_water_distribute(self, method, **kwargs):
+	def transition_zone_water_distribute(self, method = 'array', **kwargs):
 	
 		"""A method to distribute entered bulk water content among mantle transition zone mineral
 		constituents using the set up environment.
@@ -4688,7 +4756,10 @@ class pide(object):
 			
 		if method == 'array':
 			if len(max_mineral_water) == 1:
-				return max_mineral_water[0]
+				if type(max_mineral_water[0]) is np.ndarray:
+					return max_mineral_water[0]
+				else:
+					return max_mineral_water
 			else:
 				return max_mineral_water
 		elif method == 'index':
@@ -4806,7 +4877,3 @@ class pide(object):
 		"""
 		
 		self._form_object()
-		
-	
-		
-

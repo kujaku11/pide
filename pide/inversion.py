@@ -15,17 +15,24 @@ def _comp_adjust_(_comp_list, comp_alien, comp_old,final = False):
 	
 	return comp_list
 
-def _solv_cond_(index, cond_list, object, param, upperlimit, lowerlimit, search_increment, acceptence_threshold, 
-	init_guess = None, transition_zone = False, water_solv=False, comp_solv=False, comp_type = None, comp_index = None, low_value_threshold = None):
+def _solv_cond_(index, cond_list, object, param, upperlimit, lowerlimit, search_increment, acceptence_threshold, results_list = None,
+	init_guess = None, transition_zone = False, water_solv=False, comp_solv=False, comp_type = None, comp_index = None, low_value_threshold = None,):
 	
-	"""Simple grid-search solver to solve conductivities. This function should not be called directly.	
+	"""Simple line-search solver to solve conductivities. This function should not be called directly.	
 	"""
-		
-	param_search_array = np.arange(lowerlimit[index], upperlimit[index], search_increment)
 	
+	if results_list is not None:
+		if len(results_list) == 0:
+			init_guess = None
+		else:
+			init_guess = results_list[-1]
+			
+	param_search_array = np.arange(lowerlimit[index], upperlimit[index] , search_increment)
+		
 	if len(param_search_array) == 1:
 	
 		sol_param = upperlimit[index]
+		
 		if comp_solv == True:
 			if comp_type == 'mineral':
 				_comp_list = [object.quartz_frac[index], object.plag_frac[index], object.amp_frac[index], object.kfelds_frac[index], object.opx_frac[index], object.cpx_frac[index],
@@ -65,13 +72,23 @@ def _solv_cond_(index, cond_list, object, param, upperlimit, lowerlimit, search_
 
 		restart = True
 		init_search_increment = np.array(search_increment)
+		init_restart = True
 		
 		while restart:
 			
 			restart = False
 			
-			for j in range(0,len(param_search_array)):
+			if init_guess == None:
+				idx_start_search = 0
+			else:
+				if init_restart == True:
+					idx_start_search = np.argmin(np.abs(param_search_array-init_guess))
+					init_restart = False
+				else:
+					idx_start_search = 0
 			
+			for j in range(idx_start_search,len(param_search_array)):
+				
 				if comp_solv == True:
 				
 					if comp_type == 'mineral':
@@ -89,7 +106,7 @@ def _solv_cond_(index, cond_list, object, param, upperlimit, lowerlimit, search_
 						
 						if comp_type == 'mineral':
 							object.mineral_frac_list[idx_t][index] = comp_list[idx_t]
-						elif comp_type == 'mineral':
+						elif comp_type == 'rock':
 							object.rock_frac_list[idx_t][index] = comp_list[idx_t]
 						
 					exec('object.' + param + '[' + str(index) + ']='  + str(param_search_array[j]))
@@ -102,7 +119,7 @@ def _solv_cond_(index, cond_list, object, param, upperlimit, lowerlimit, search_
 				else:
 				
 					exec('object.' + param + '[' + str(index) + ']='  + str(param_search_array[j]))
-				
+					
 				if water_solv == True:
 					if transition_zone == False:
 						object.mantle_water_distribute(method = 'index', sol_idx = index)
@@ -119,29 +136,16 @@ def _solv_cond_(index, cond_list, object, param, upperlimit, lowerlimit, search_
 						sol_param = param_search_array[j]
 					else:
 						if param_search_array[j] < low_value_threshold:
-						
 							sol_param = 0.0
-							
-							if comp_solv == True:
-							
-								comp_list = _comp_adjust_(np.array(_comp_list), 0.0 , comp_old)
-								
-								for idx_t in range(len(_comp_list)):
-						
-									if comp_type == 'mineral':
-										object.mineral_frac_list[idx_t][index] = comp_list[idx_t]
-									elif comp_type == 'mineral':
-										object.rock_frac_list[idx_t][index] = comp_list[idx_t]
-									
-								exec('object.' + param + '[' + str(index) + ']='  + str(param_search_array[j]))
 						else:
 							sol_param = param_search_array[j]
+
 					break
 					
 				else:
 					
 					if residual < 0.0:
-						if len(param_search_array) > 4:
+						if (len(param_search_array) > 4) and (j>=3):
 							
 							if search_increment <= (init_search_increment * 1e-2 * acceptence_threshold):
 								sol_param = lowerlimit[index]
@@ -169,14 +173,31 @@ def _solv_cond_(index, cond_list, object, param, upperlimit, lowerlimit, search_
 							break
 						else:
 							pass
+
+		if results_list is not None:
+			results_list.append(sol_param)
 	
 	return sol_param, residual
+
 	
 def conductivity_solver_single_param(object, cond_list, param_name,
 	upper_limit_list, lower_limit_list, search_start, acceptence_threshold, cond_err = None, transition_zone = False, num_cpu = 1,**kwargs):
 
 	"""
-	A function to fit conductivity value with a single parameter with simple search algorithm.
+	A function to fit conductivity value with a single parameter with simple line-search algorithm.
+	
+	Input:
+	object: object - pide object that is going to be used for the inversion calculations.
+	array: cond_list - conductivity array list used for inversion || in S/m
+	str: param_name - parameter name to invert for. This can be any parameter that is included in pide.object.
+	array: upper_limit_list - upper limit value for the search space for the given parameter.
+	array: lower_limit_list - lower limit value for the search space for the given parameter.
+	float: search_start - initial search length used in the line search.
+	float: acceptance_threshold - acceptance value to stop inversion process.
+	array: cond_err - error floors to add to the inversion.
+	bool: transition_zone - boolean value to indicate transition zone water distribution functions are going to be used.
+	int: num_cpu - number of cpu to compute the inversion.
+	float: low_value_threshold - threshold value of parameter to revert to zero for the solution. 
 	"""
 	
 	min_list = ['quartz_frac', 'plag_frac', 'amp_frac', 'kfelds_frac', 'opx_frac', 'cpx_frac',
@@ -243,12 +264,16 @@ def conductivity_solver_single_param(object, cond_list, param_name,
 			raise ValueError('There are not enough cpus in the machine to run this action with ' + str(num_cpu) + ' cores.')
 			
 	if num_cpu > 1:
+		
+		manager = multiprocessing.Manager()
+		shared_results = manager.list()
 	
 		with multiprocessing.Pool(processes=num_cpu) as pool:
 							
 			process_item_partial = partial(_solv_cond_, cond_list = cond_list, object = object, param = param_name, upperlimit = upper_limit_list,
-			lowerlimit=lower_limit_list , search_increment= search_start, acceptence_threshold = acceptence_threshold, init_guess = 0, transition_zone = transition_zone,
-			water_solv=water_solv,comp_solv = comp_solv, comp_type = comp_type, comp_index = comp_index, low_value_threshold = low_value_threshold)
+			lowerlimit=lower_limit_list , search_increment= search_start, acceptence_threshold = acceptence_threshold, results_list = shared_results, init_guess = None,
+			transition_zone = transition_zone, water_solv=water_solv,comp_solv = comp_solv, comp_type = comp_type, comp_index = comp_index,
+			low_value_threshold = low_value_threshold)
 			
 			c = pool.map(process_item_partial, index_list)
 			
@@ -263,8 +288,12 @@ def conductivity_solver_single_param(object, cond_list, param_name,
 		
 		for idx in range(0,len(index_list)):
 			
+			if idx > 0:
+				init_guess_ = c_list[idx-1]
+			else:
+				init_guess_ = None
 			c = _solv_cond_(index = index_list[idx], cond_list = cond_list, object = object, param = param_name, upperlimit = upper_limit_list,
-				lowerlimit=lower_limit_list , search_increment= search_start, acceptence_threshold = acceptence_threshold, init_guess = 0, transition_zone = transition_zone, 
+				lowerlimit=lower_limit_list , search_increment= search_start, acceptence_threshold = acceptence_threshold, results_list= None, init_guess = init_guess_, transition_zone = transition_zone, 
 				water_solv=water_solv, comp_solv = comp_solv, comp_type = comp_type, comp_index = comp_index, low_value_threshold = low_value_threshold)
 			
 			c_list[idx] = c[0]

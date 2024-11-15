@@ -2,14 +2,33 @@ import numpy as np
 import csv
 
 def _associate_coordinates_(index, x_target, y_target, x_sample, y_sample):
-
-	#Function to call inside this class by associate_coordinates method for parallelisation purposes.
+	
+	"""
+	Function to associate_coordinates method for parallelisation purposes.
+	
+	Input:
+	int: index - index for the x_target array
+	array: x_target - array for the target search x-direction
+	array: y_target -array for the target search in y-direction
+	array: x_sample -array for the samples in x-direction
+	array: y_sample -array for the samples in y-direction
+	
+	Output:
+	int: idx_final - the closest index where x_sample and y_sample is closes to x_target[index] y_target[index]
+	"""
 
 	idx_target = (np.abs(y_sample-y_target[index])).argmin()
 	idx_target_lists = [idx for idx, value in enumerate(y_sample) if value == y_sample[idx_target]]
 	idx_ = (np.abs(x_sample[idx_target_lists]-x_target[index])).argmin()
 	idx_final = idx_target_lists[idx_]
 	
+	return idx_final
+
+def _associated_coordinates_2(index, x_target, y_target, x_sample, y_sample):
+
+	distance = np.sqrt((y_target[index] - y_sample)**2.0 + ((x_target[index] - x_sample)**2.0))
+	idx_final = np.argmin(distance)
+
 	return idx_final
 
 def check_type(input):
@@ -69,9 +88,16 @@ def array_modifier(input, array, varname):
 			
 	return ret_array
 	
-def read_csv(filename,delim):
+def read_csv(filename,delim,linefiltering = True):
 	"""
 	Simple function for reading csv files and give out filtered output for given delimiter (delim)
+	
+	Input:
+	str: filename - filename string or full path to the csv file.
+	str: delim - delimiter for the csv file.
+	
+	Output:
+	array: data
 	"""
 	
 	with open(filename,'rt',encoding = "utf8") as file_obj:
@@ -86,7 +112,9 @@ def read_csv(filename,delim):
 		#Filtering data for None elements read.
 		for j in range(0,len(data)):
 			data[j] = list(filter(None,data[j]))
-		data = list(filter(None,data))
+			
+		if linefiltering == True:
+			data = list(filter(None,data))
 	
 		return data
 		
@@ -94,8 +122,16 @@ def read_csv(filename,delim):
 def associate_coordinates(sample_x, sample_y, target_x, target_y,  num_cpu = 1, filename = 'idx.mat' ,method = 'return'):
 
 	"""
-	Returns the closest indexes of sample_x and _y for target_x and _y arrays.
-	It can be saved as a mat file.
+	Function to associate_coordinates method for parallelisation purposes.
+	
+	Input:
+	array: x_target - array for the target search x-direction
+	array: y_target -array for the target search in y-direction
+	array: x_sample -array for the samples in x-direction
+	array: y_sample -array for the samples in y-direction
+	
+	Output:
+	array: idx_array - the closest index where x_sample and y_sample is closes to x_target y_target
 	"""
 
 	if num_cpu != 1:
@@ -109,7 +145,7 @@ def associate_coordinates(sample_x, sample_y, target_x, target_y,  num_cpu = 1, 
 	
 		with multiprocessing.Pool(processes=num_cpu) as pool:
 			
-			process_item_partial = partial(_associate_coordinates_, x_target = target_x,
+			process_item_partial = partial(_associated_coordinates_2, x_target = target_x,
 			y_target = target_y, x_sample = sample_x, y_sample = sample_y)
 			
 			c = pool.map(process_item_partial, index_list)
@@ -122,7 +158,7 @@ def associate_coordinates(sample_x, sample_y, target_x, target_y,  num_cpu = 1, 
 		
 		for i in index_list:
 		
-			idx = _associate_coordinates_(i, x_target = target_x,
+			idx = _associated_coordinates_2(i, x_target = target_x,
 			y_target = target_y, x_sample = sample_x, y_sample = sample_y) 
 			idx_array.append(idx)
 		
@@ -146,7 +182,6 @@ def sort_through_external_list(first_list, second_list):
 	sorted_second_list = [element[1] for element in sorted_combined_lists]
 	return sorted_second_list
 	
-
 class text_color:
    
    #color object for to be called by the print outs.
